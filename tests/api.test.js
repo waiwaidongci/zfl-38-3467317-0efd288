@@ -329,16 +329,55 @@ describe("阶段门禁", () => {
       assert.equal(r.data.code, "invalid_stage");
     }
   });
+  it("进入待复核前：帆索未全部校准则被拦截，全部校准后放行", async () => {
+    const ship = (await createShip()).data;
+    await api(`/api/items/${ship.id}/riggings`, {
+      method: "POST",
+      body: { version: 1, position: "前桅支索", targetTension: "2kg" },
+    });
+    await api(`/api/items/${ship.id}/riggings`, {
+      method: "POST",
+      body: { version: await versionOf(ship.id), position: "后桅升帆索", targetTension: "3kg" },
+    });
+    await api(`/api/items/${ship.id}/transition`, { method: "POST", body: { version: await versionOf(ship.id), to: "校准中" } });
+    // 只校准一根，推进待复核被拒，错误里列出未校准的帆索
+    const list = (await api(`/api/items/${ship.id}`)).data.riggings;
+    const [r1] = list;
+    await api(`/api/items/${ship.id}/riggings/${r1.id}/calibrations`, {
+      method: "POST",
+      body: { version: await versionOf(ship.id), before: "1kg", after: "2kg" },
+    });
+    let r = await api(`/api/items/${ship.id}/transition`, { method: "POST", body: { version: await versionOf(ship.id), to: "待复核" } });
+    assert.equal(r.status, 422);
+    assert.equal(r.data.code, "uncalibrated_riggings");
+    assert.match(r.data.error, /后桅升帆索/);
+    assert.deepEqual(r.data.details.positions, ["后桅升帆索"]);
+    // 状态没有被推进
+    assert.equal((await api(`/api/items/${ship.id}`)).data.status, "校准中");
+    // 校准剩余帆索后放行
+    const r2 = list[1];
+    await api(`/api/items/${ship.id}/riggings/${r2.id}/calibrations`, {
+      method: "POST",
+      body: { version: await versionOf(ship.id), before: "2kg", after: "3kg" },
+    });
+    r = await api(`/api/items/${ship.id}/transition`, { method: "POST", body: { version: await versionOf(ship.id), to: "待复核" } });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.status, "待复核");
+  });
 });
 
 describe("交付闸门", () => {
   it("拦住未复核帆索", async () => {
     const ship = (await createShip()).data;
-    await api(`/api/items/${ship.id}/riggings`, {
+    const rig = await api(`/api/items/${ship.id}/riggings`, {
       method: "POST",
       body: { version: 1, position: "后桅升帆索", targetTension: "3kg" },
     });
     await api(`/api/items/${ship.id}/transition`, { method: "POST", body: { version: await versionOf(ship.id), to: "校准中" } });
+    await api(`/api/items/${ship.id}/riggings/${rig.data.id}/calibrations`, {
+      method: "POST",
+      body: { version: await versionOf(ship.id), before: "2kg", after: "3kg" },
+    });
     await api(`/api/items/${ship.id}/transition`, { method: "POST", body: { version: await versionOf(ship.id), to: "待复核" } });
     const blocked = await api(`/api/items/${ship.id}/transition`, {
       method: "POST",
@@ -374,14 +413,16 @@ describe("交付闸门", () => {
     assert.match(blocked.data.details.reasons.join(), /逾期/);
   });
 
-  it("未校准的帆索不能复核", async () => {
+  it("未校准的帆索不能复核（防御性检查，直接构造待复核状态）", async () => {
+    // 正常流程已无法带着未校准帆索进入待复核，这里直接落库构造该状态，验证复核接口的防线
     const ship = (await createShip()).data;
     const rig = await api(`/api/items/${ship.id}/riggings`, {
       method: "POST",
       body: { version: 1, position: "前桅支索", targetTension: "2kg" },
     });
-    await api(`/api/items/${ship.id}/transition`, { method: "POST", body: { version: await versionOf(ship.id), to: "校准中" } });
-    await api(`/api/items/${ship.id}/transition`, { method: "POST", body: { version: await versionOf(ship.id), to: "待复核" } });
+    const stored = store.db.items.find((x) => x.id === ship.id);
+    stored.status = "待复核";
+    await store.save();
     const r = await api(`/api/items/${ship.id}/riggings/${rig.data.id}/review`, {
       method: "POST",
       body: { version: await versionOf(ship.id) },

@@ -178,7 +178,15 @@ function page() {
           '<div class="logs">' + (cals || '暂无校准记录') + '</div>' + calForm + '<div class="row">' + revBtn + '</div></div>';
       }).join('');
       const next = STAGES[STAGES.indexOf(ship.status) + 1];
-      const advBtn = next ? '<button class="small" id="adv-' + ship.id + '">推进到「' + next + '」</button>' : '';
+      // 推进前置条件：待检查→校准中 需有帆索；校准中→待复核 需全部已校准；待复核→已交付 需全部已复核且未逾期
+      const canAdvance =
+        ship.status === '待检查' ? ship.riggings.length > 0
+        : ship.status === '校准中' ? ship.riggings.length > 0 && ship.riggings.every(r => r.status !== '待校准')
+        : ship.status === '待复核' ? ship.riggings.every(r => r.status === '已复核') && !ship.overdue
+        : false;
+      const advBtn = next
+        ? '<button class="small" id="adv-' + ship.id + '"' + (canAdvance(ship) ? '' : ' disabled title="不满足推进条件，见上方下一步提示"') + '>推进到「' + next + '」</button>'
+        : '';
       const editBtn = ship.status !== '已交付' ? '<button class="small secondary" id="edit-' + ship.id + '">编辑</button>' : '';
       const addForm = ['待检查', '校准中'].includes(ship.status)
         ? '<form id="addrig-' + ship.id + '" class="row"><input name="position" placeholder="索具位置" required style="width:130px">' +
