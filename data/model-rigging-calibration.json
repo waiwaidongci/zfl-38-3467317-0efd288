@@ -9,37 +9,55 @@
       "owner": "周宁",
       "dueDate": "2026-06-28",
       "status": "校准中",
-      "tasks": [
-        {
-          "id": "T-1",
-          "position": "前桅侧支索",
-          "tension": "偏松",
-          "status": "调整中",
-          "logs": [
-            {
-              "at": "2026-06-12",
-              "note": "已缩短2mm"
-            }
-          ]
-        },
-        {
-          "id": "T-1782013829186",
-          "position": "后桅升帆索",
-          "tension": "偏紧",
-          "status": "待检查",
-          "logs": [
-            {
-              "at": "2026-06-21T03:50:29.186Z",
-              "note": "回退半圈"
-            }
-          ]
-        }
-      ],
       "logs": [
         {
           "at": "2026-06-21T03:50:29.186Z",
           "step": "帆索",
           "note": "后桅升帆索 · 偏紧"
+        }
+      ],
+      "id": "MR-mtyahw5a-1",
+      "version": 1,
+      "createdAt": "2026-09-12T11:16:18.814Z",
+      "updatedAt": "2026-09-12T11:16:18.814Z",
+      "riggings": [
+        {
+          "id": "T-1",
+          "position": "前桅侧支索",
+          "targetTension": "偏松",
+          "status": "已校准",
+          "calibrations": [
+            {
+              "id": "C-mtyahw5a-2",
+              "at": "2026-06-12",
+              "before": "偏松",
+              "after": "已缩短2mm",
+              "note": "已缩短2mm",
+              "operator": "周宁",
+              "clientToken": null
+            }
+          ],
+          "reviewedAt": null,
+          "reviewedBy": null
+        },
+        {
+          "id": "T-1782013829186",
+          "position": "后桅升帆索",
+          "targetTension": "偏紧",
+          "status": "已校准",
+          "calibrations": [
+            {
+              "id": "C-mtyahw5a-3",
+              "at": "2026-06-21T03:50:29.186Z",
+              "before": "偏紧",
+              "after": "回退半圈",
+              "note": "回退半圈",
+              "operator": "周宁",
+              "clientToken": null
+            }
+          ],
+          "reviewedAt": null,
+          "reviewedBy": null
         }
       ]
     }

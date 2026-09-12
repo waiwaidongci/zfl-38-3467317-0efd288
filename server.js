@@ -219,6 +219,7 @@ function page() {
     function calibrate(e, ship, r) {
       e.preventDefault();
       const data = Object.fromEntries(new FormData(e.target).entries());
+      data.version = ship.version;
       data.clientToken = ship.id + '-' + r.id + '-' + Date.now();
       run(() => api('/api/items/' + ship.id + '/riggings/' + r.id + '/calibrations', { method: 'POST', body: JSON.stringify(data) }));
     }
@@ -256,7 +257,7 @@ export function createApp(store) {
     try {
       const url = new URL(req.url, `http://${req.headers.host}`);
       const path = url.pathname;
-      await store.load();
+      await store.init();
 
       if (req.method === "GET" && path === "/") return html(res, page());
 
@@ -265,8 +266,8 @@ export function createApp(store) {
         return send(res, 200, store.queryItems({ code, shipType, owner, dueDate, status, overdue }));
       }
       if (req.method === "POST" && path === "/api/items") {
-        const item = store.createItem(await readBody(req));
-        await store.save();
+        const input = await readBody(req);
+        const item = await store.transact(() => store.createItem(input));
         return send(res, 201, store.summarize(item));
       }
       if (req.method === "GET" && path === "/api/dashboard") {
@@ -278,36 +279,40 @@ export function createApp(store) {
         return send(res, 200, store.summarize(store.findItem(decodeURIComponent(itemMatch[1]))));
       }
       if (itemMatch && req.method === "PUT") {
-        const item = store.updateItem(decodeURIComponent(itemMatch[1]), await readBody(req));
-        await store.save();
+        const input = await readBody(req);
+        const item = await store.transact(() => store.updateItem(decodeURIComponent(itemMatch[1]), input));
         return send(res, 200, store.summarize(item));
       }
 
       const transition = path.match(/^\/api\/items\/([^/]+)\/transition$/);
       if (transition && req.method === "POST") {
-        const item = store.transition(decodeURIComponent(transition[1]), await readBody(req));
-        await store.save();
+        const input = await readBody(req);
+        const item = await store.transact(() => store.transition(decodeURIComponent(transition[1]), input));
         return send(res, 200, store.summarize(item));
       }
 
       const riggings = path.match(/^\/api\/items\/([^/]+)\/riggings$/);
       if (riggings && req.method === "POST") {
-        const rigging = store.addRigging(decodeURIComponent(riggings[1]), await readBody(req));
-        await store.save();
+        const input = await readBody(req);
+        const rigging = await store.transact(() => store.addRigging(decodeURIComponent(riggings[1]), input));
         return send(res, 201, rigging);
       }
 
       const calibrations = path.match(/^\/api\/items\/([^/]+)\/riggings\/([^/]+)\/calibrations$/);
       if (calibrations && req.method === "POST") {
-        const result = store.addCalibration(decodeURIComponent(calibrations[1]), decodeURIComponent(calibrations[2]), await readBody(req));
-        await store.save();
+        const input = await readBody(req);
+        const result = await store.transact(() =>
+          store.addCalibration(decodeURIComponent(calibrations[1]), decodeURIComponent(calibrations[2]), input)
+        );
         return send(res, result.duplicated ? 200 : 201, result);
       }
 
       const review = path.match(/^\/api\/items\/([^/]+)\/riggings\/([^/]+)\/review$/);
       if (review && req.method === "POST") {
-        const rigging = store.reviewRigging(decodeURIComponent(review[1]), decodeURIComponent(review[2]), await readBody(req));
-        await store.save();
+        const input = await readBody(req);
+        const rigging = await store.transact(() =>
+          store.reviewRigging(decodeURIComponent(review[1]), decodeURIComponent(review[2]), input)
+        );
         return send(res, 200, rigging);
       }
 
