@@ -164,13 +164,13 @@ function page() {
         const cals = r.calibrations.map(c =>
           '<div>#' + esc(c.id.slice(-4)) + ' ' + esc(c.at.slice(0, 10)) + ' ' + esc(c.before) + ' → <b>' + esc(c.after) + '</b>' +
           (c.note ? ' · ' + esc(c.note) : '') + ' · ' + esc(c.operator) + '</div>').join('');
-        const calForm = r.status !== '已复核' && ship.status !== '已交付'
+        const calForm = r.status !== '已复核' && ship.status === '校准中'
           ? '<form id="cal-' + r.id + '" class="row">' +
             '<input name="before" placeholder="调整前值" required style="width:110px">' +
             '<input name="after" placeholder="调整后值" required style="width:110px">' +
             '<input name="note" placeholder="备注" style="width:110px">' +
             '<button class="small">记录校准</button></form>' : '';
-        const revBtn = r.status === '已校准'
+        const revBtn = r.status === '已校准' && ship.status === '待复核'
           ? '<button class="small secondary" id="rev-' + r.id + '">复核通过</button>'
           : (r.status === '已复核' ? '<span class="pill">已复核 · ' + esc(r.reviewedBy || '') + '</span>' : '');
         return '<div class="rigging"><div class="row" style="justify-content:space-between"><b>' + esc(r.position) + '</b><span class="pill">' + r.status + '</span></div>' +
@@ -180,7 +180,7 @@ function page() {
       const next = STAGES[STAGES.indexOf(ship.status) + 1];
       const advBtn = next ? '<button class="small" id="adv-' + ship.id + '">推进到「' + next + '」</button>' : '';
       const editBtn = ship.status !== '已交付' ? '<button class="small secondary" id="edit-' + ship.id + '">编辑</button>' : '';
-      const addForm = ship.status !== '已交付'
+      const addForm = ['待检查', '校准中'].includes(ship.status)
         ? '<form id="addrig-' + ship.id + '" class="row"><input name="position" placeholder="索具位置" required style="width:130px">' +
           '<input name="targetTension" placeholder="目标松紧" required style="width:130px"><button class="small">添加帆索</button></form>' : '';
       const logs = ship.logs.slice(-5).reverse().map(l => '<div>' + esc(l.at.slice(0, 10)) + ' ' + esc(l.step) + '：' + esc(l.note) + '</div>').join('');

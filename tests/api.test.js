@@ -107,7 +107,9 @@ describe("正常流程：建档 → 加帆索 → 校准 → 复核 → 依次�
     assert.equal(c2.data.rigging.calibrations[1].after, "2.5kg");
     assert.equal(c2.data.rigging.status, "已校准");
 
-    // 复核
+    // 复核只能在「待复核」阶段：先推进状态
+    t = await api(`/api/items/${id}/transition`, { method: "POST", body: { version: await versionOf(id), to: "待复核" } });
+    assert.equal(t.status, 200);
     const review = await api(`/api/items/${id}/riggings/${rid}/review`, {
       method: "POST",
       body: { version: await versionOf(id), reviewer: "陈工" },
@@ -117,9 +119,7 @@ describe("正常流程：建档 → 加帆索 → 校准 → 复核 → 依次�
     assert.equal(review.data.reviewedBy, "陈工");
 
     // 依次推进到交付
-    t = await api(`/api/items/${id}/transition`, { method: "POST", body: { version: await versionOf(id), to: "待复核" } });
-    assert.equal(t.status, 200);
-    t = await api(`/api/items/${id}/transition`, { method: "POST", body: { version: t.data.version, to: "已交付" } });
+    t = await api(`/api/items/${id}/transition`, { method: "POST", body: { version: await versionOf(id), to: "已交付" } });
     assert.equal(t.status, 200);
     assert.equal(t.data.status, "已交付");
     assert.equal(t.data.progress.percent, 100);
@@ -136,9 +136,13 @@ describe("非法操作拦截", () => {
     // 待检查 → 已交付（跳级）
     r = await api(`/api/items/${ship.id}/transition`, { method: "POST", body: { version: 1, to: "已交付" } });
     assert.equal(r.status, 422);
-    // 推进到校准中后尝试回退到待检查
-    await api(`/api/items/${ship.id}/transition`, { method: "POST", body: { version: 1, to: "校准中" } });
-    r = await api(`/api/items/${ship.id}/transition`, { method: "POST", body: { version: 2, to: "待检查" } });
+    // 推进到校准中后尝试回退到待检查（先加帆索满足进入校准中的前提）
+    await api(`/api/items/${ship.id}/riggings`, {
+      method: "POST",
+      body: { version: 1, position: "前桅支索", targetTension: "2kg" },
+    });
+    await api(`/api/items/${ship.id}/transition`, { method: "POST", body: { version: await versionOf(ship.id), to: "校准中" } });
+    r = await api(`/api/items/${ship.id}/transition`, { method: "POST", body: { version: await versionOf(ship.id), to: "待检查" } });
     assert.equal(r.status, 422);
     assert.equal(r.data.code, "invalid_transition");
   });
@@ -197,6 +201,136 @@ describe("非法操作拦截", () => {
   });
 });
 
+describe("阶段门禁", () => {
+  async function shipWithRigging() {
+    const ship = (await createShip()).data;
+    const rig = await api(`/api/items/${ship.id}/riggings`, {
+      method: "POST",
+      body: { version: 1, position: "前桅支索", targetTension: "2kg" },
+    });
+    return { ship, rid: rig.data.id };
+  }
+  async function gotoStage(id, target) {
+    while (true) {
+      const cur = (await api(`/api/items/${id}`)).data;
+      if (cur.status === target) return cur;
+      const next = ["待检查", "校准中", "待复核", "已交付"][["待检查", "校准中", "待复核", "已交付"].indexOf(cur.status) + 1];
+      const r = await api(`/api/items/${id}/transition`, { method: "POST", body: { version: cur.version, to: next } });
+      assert.equal(r.status, 200, `推进到 ${next} 失败：${JSON.stringify(r.data)}`);
+    }
+  }
+
+  it("待检查：禁止校准、禁止复核、无帆索禁止进入校准中、允许加帆索", async () => {
+    const ship = (await createShip()).data;
+    // 没有帆索时不能进入校准中
+    let r = await api(`/api/items/${ship.id}/transition`, { method: "POST", body: { version: 1, to: "校准中" } });
+    assert.equal(r.status, 422);
+    assert.equal(r.data.code, "no_riggings");
+    // 允许加帆索
+    const rig = await api(`/api/items/${ship.id}/riggings`, {
+      method: "POST",
+      body: { version: 1, position: "前桅支索", targetTension: "2kg" },
+    });
+    assert.equal(rig.status, 201);
+    // 待检查阶段校准被拒绝
+    r = await api(`/api/items/${ship.id}/riggings/${rig.data.id}/calibrations`, {
+      method: "POST",
+      body: { version: await versionOf(ship.id), before: "1kg", after: "2kg" },
+    });
+    assert.equal(r.status, 422);
+    assert.equal(r.data.code, "invalid_stage");
+    assert.match(r.data.error, /校准中/);
+    // 待检查阶段复核被拒绝
+    r = await api(`/api/items/${ship.id}/riggings/${rig.data.id}/review`, {
+      method: "POST",
+      body: { version: await versionOf(ship.id) },
+    });
+    assert.equal(r.status, 422);
+    assert.equal(r.data.code, "invalid_stage");
+    assert.match(r.data.error, /待复核/);
+  });
+
+  it("校准中：允许校准和补帆索、禁止复核", async () => {
+    const { ship, rid } = await shipWithRigging();
+    await gotoStage(ship.id, "校准中");
+    // 允许校准
+    let r = await api(`/api/items/${ship.id}/riggings/${rid}/calibrations`, {
+      method: "POST",
+      body: { version: await versionOf(ship.id), before: "1kg", after: "2kg" },
+    });
+    assert.equal(r.status, 201);
+    // 允许补帆索
+    r = await api(`/api/items/${ship.id}/riggings`, {
+      method: "POST",
+      body: { version: await versionOf(ship.id), position: "后桅支索", targetTension: "3kg" },
+    });
+    assert.equal(r.status, 201);
+    // 禁止复核
+    r = await api(`/api/items/${ship.id}/riggings/${rid}/review`, {
+      method: "POST",
+      body: { version: await versionOf(ship.id) },
+    });
+    assert.equal(r.status, 422);
+    assert.equal(r.data.code, "invalid_stage");
+  });
+
+  it("待复核：允许复核、禁止补帆索、禁止校准", async () => {
+    const { ship, rid } = await shipWithRigging();
+    await gotoStage(ship.id, "校准中");
+    await api(`/api/items/${ship.id}/riggings/${rid}/calibrations`, {
+      method: "POST",
+      body: { version: await versionOf(ship.id), before: "1kg", after: "2kg" },
+    });
+    await gotoStage(ship.id, "待复核");
+    // 禁止补帆索
+    let r = await api(`/api/items/${ship.id}/riggings`, {
+      method: "POST",
+      body: { version: await versionOf(ship.id), position: "后桅支索", targetTension: "3kg" },
+    });
+    assert.equal(r.status, 422);
+    assert.equal(r.data.code, "invalid_stage");
+    // 禁止校准
+    r = await api(`/api/items/${ship.id}/riggings/${rid}/calibrations`, {
+      method: "POST",
+      body: { version: await versionOf(ship.id), before: "2kg", after: "2.5kg" },
+    });
+    assert.equal(r.status, 422);
+    assert.equal(r.data.code, "invalid_stage");
+    // 允许复核
+    r = await api(`/api/items/${ship.id}/riggings/${rid}/review`, {
+      method: "POST",
+      body: { version: await versionOf(ship.id) },
+    });
+    assert.equal(r.status, 200);
+    assert.equal(r.data.status, "已复核");
+  });
+
+  it("已交付：一切修改都被拒绝", async () => {
+    const { ship, rid } = await shipWithRigging();
+    await gotoStage(ship.id, "校准中");
+    await api(`/api/items/${ship.id}/riggings/${rid}/calibrations`, {
+      method: "POST",
+      body: { version: await versionOf(ship.id), before: "1kg", after: "2kg" },
+    });
+    await gotoStage(ship.id, "待复核");
+    await api(`/api/items/${ship.id}/riggings/${rid}/review`, {
+      method: "POST",
+      body: { version: await versionOf(ship.id) },
+    });
+    await gotoStage(ship.id, "已交付");
+    const v = await versionOf(ship.id);
+    for (const [path, body] of [
+      [`/api/items/${ship.id}/riggings`, { version: v, position: "x", targetTension: "1kg" }],
+      [`/api/items/${ship.id}/riggings/${rid}/calibrations`, { version: v, before: "1kg", after: "2kg" }],
+      [`/api/items/${ship.id}/riggings/${rid}/review`, { version: v }],
+    ]) {
+      const r = await api(path, { method: "POST", body });
+      assert.equal(r.status, 422, `${path} 应被拒绝`);
+      assert.equal(r.data.code, "invalid_stage");
+    }
+  });
+});
+
 describe("交付闸门", () => {
   it("拦住未复核帆索", async () => {
     const ship = (await createShip()).data;
@@ -226,11 +360,11 @@ describe("交付闸门", () => {
       method: "POST",
       body: { version: await versionOf(ship.id), before: "1kg", after: "2kg" },
     });
+    await api(`/api/items/${ship.id}/transition`, { method: "POST", body: { version: await versionOf(ship.id), to: "待复核" } });
     await api(`/api/items/${ship.id}/riggings/${rig.data.id}/review`, {
       method: "POST",
       body: { version: await versionOf(ship.id) },
     });
-    await api(`/api/items/${ship.id}/transition`, { method: "POST", body: { version: await versionOf(ship.id), to: "待复核" } });
     const blocked = await api(`/api/items/${ship.id}/transition`, {
       method: "POST",
       body: { version: await versionOf(ship.id), to: "已交付" },
@@ -246,6 +380,8 @@ describe("交付闸门", () => {
       method: "POST",
       body: { version: 1, position: "前桅支索", targetTension: "2kg" },
     });
+    await api(`/api/items/${ship.id}/transition`, { method: "POST", body: { version: await versionOf(ship.id), to: "校准中" } });
+    await api(`/api/items/${ship.id}/transition`, { method: "POST", body: { version: await versionOf(ship.id), to: "待复核" } });
     const r = await api(`/api/items/${ship.id}/riggings/${rig.data.id}/review`, {
       method: "POST",
       body: { version: await versionOf(ship.id) },
@@ -262,6 +398,7 @@ describe("重复提交", () => {
       method: "POST",
       body: { version: 1, position: "前桅支索", targetTension: "2kg" },
     });
+    await api(`/api/items/${ship.id}/transition`, { method: "POST", body: { version: await versionOf(ship.id), to: "校准中" } });
     const payload = { version: await versionOf(ship.id), before: "1kg", after: "2kg", clientToken: "retry-abc" };
     const first = await api(`/api/items/${ship.id}/riggings/${rig.data.id}/calibrations`, { method: "POST", body: payload });
     assert.equal(first.status, 201);
@@ -278,6 +415,7 @@ describe("重复提交", () => {
       method: "POST",
       body: { version: 1, position: "前桅支索", targetTension: "2kg" },
     });
+    await api(`/api/items/${ship.id}/transition`, { method: "POST", body: { version: await versionOf(ship.id), to: "校准中" } });
     await api(`/api/items/${ship.id}/riggings/${rig.data.id}/calibrations`, {
       method: "POST",
       body: { version: await versionOf(ship.id), before: "1kg", after: "1.5kg", note: "第一次" },
@@ -333,6 +471,7 @@ describe("并发写入", () => {
       method: "POST",
       body: { version: 1, position: "前桅支索", targetTension: "2kg" },
     });
+    await api(`/api/items/${ship.id}/transition`, { method: "POST", body: { version: await versionOf(ship.id), to: "校准中" } });
     const v = await versionOf(ship.id);
     const results = await Promise.all([
       api(`/api/items/${ship.id}/riggings/${rig.data.id}/calibrations`, {
@@ -370,7 +509,7 @@ describe("检索", () => {
     assert.equal(dash.overdue.length, 1);
     assert.equal(dash.overdue[0].code, "MR-301");
     assert.ok(dash.overdue[0].daysOverdue > 0);
-    assert.equal(dash.ships[0].nextAction, "推进到「校准中」，开始校准帆索");
+    assert.equal(dash.ships[0].nextAction, "先添加帆索，再推进到「校准中」");
   });
 });
 
