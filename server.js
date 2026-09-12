@@ -147,9 +147,11 @@ function page() {
     function renderCards() {
       $('#cards').innerHTML = ships.map(cardHtml).join('') || '<div class="panel meta">没有符合条件的模型</div>';
       ships.forEach(ship => {
-        $('#adv-' + ship.id).onclick = () => advance(ship);
-        $('#edit-' + ship.id).onclick = () => startEdit(ship);
-        $('#addrig-' + ship.id).onsubmit = (e) => addRigging(e, ship);
+        const bind = (sel, fn) => { const el = $(sel); if (el) el.onclick = fn; };
+        bind('#adv-' + ship.id, () => advance(ship));
+        bind('#edit-' + ship.id, () => startEdit(ship));
+        const addForm = $('#addrig-' + ship.id);
+        if (addForm) addForm.onsubmit = (e) => addRigging(e, ship);
         ship.riggings.forEach(r => {
           const calForm = $('#cal-' + r.id);
           if (calForm) calForm.onsubmit = (e) => calibrate(e, ship, r);
@@ -157,6 +159,13 @@ function page() {
           if (revBtn) revBtn.onclick = () => review(ship, r);
         });
       });
+    }
+    // 推进前置条件：待检查→校准中 需有帆索；校准中→待复核 需全部已校准；待复核→已交付 需全部已复核且未逾期
+    function canAdvance(ship) {
+      if (ship.status === '待检查') return ship.riggings.length > 0;
+      if (ship.status === '校准中') return ship.riggings.length > 0 && ship.riggings.every(r => r.status !== '待校准');
+      if (ship.status === '待复核') return ship.riggings.length > 0 && ship.riggings.every(r => r.status === '已复核') && !ship.overdue;
+      return false;
     }
     function cardHtml(ship) {
       const p = ship.progress;
@@ -178,14 +187,9 @@ function page() {
           '<div class="logs">' + (cals || '暂无校准记录') + '</div>' + calForm + '<div class="row">' + revBtn + '</div></div>';
       }).join('');
       const next = STAGES[STAGES.indexOf(ship.status) + 1];
-      // 推进前置条件：待检查→校准中 需有帆索；校准中→待复核 需全部已校准；待复核→已交付 需全部已复核且未逾期
-      const canAdvance =
-        ship.status === '待检查' ? ship.riggings.length > 0
-        : ship.status === '校准中' ? ship.riggings.length > 0 && ship.riggings.every(r => r.status !== '待校准')
-        : ship.status === '待复核' ? ship.riggings.every(r => r.status === '已复核') && !ship.overdue
-        : false;
+      const allowed = canAdvance(ship);
       const advBtn = next
-        ? '<button class="small" id="adv-' + ship.id + '"' + (canAdvance(ship) ? '' : ' disabled title="不满足推进条件，见上方下一步提示"') + '>推进到「' + next + '」</button>'
+        ? '<button class="small" id="adv-' + ship.id + '"' + (allowed ? '' : ' disabled title="不满足推进条件，见上方下一步提示"') + '>推进到「' + next + '」</button>'
         : '';
       const editBtn = ship.status !== '已交付' ? '<button class="small secondary" id="edit-' + ship.id + '">编辑</button>' : '';
       const addForm = ['待检查', '校准中'].includes(ship.status)
